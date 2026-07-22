@@ -3,6 +3,7 @@ import openpyxl
 import pandas as pd
 import streamlit as st
 
+# Configuración de la página
 st.set_page_config(
     page_title="Carga de Productos Web", page_icon="📦", layout="wide"
 )
@@ -46,33 +47,41 @@ def procesar_excel(file_bytes):
                     else ""
                 )
 
-                # Omitir filas de encabezados
+                # Omitir encabezados
                 if "FECHA" in desc_b or "FECHA" in cod_a or cod_a == "None":
                     continue
 
-                # REGLA 2: Concatenar (A + B) en la Columna C de salida
+                # REGLA: Concatenar (A + B) en la Columna C de salida
                 col_c_concatenada = f"{cod_a} {desc_b}"
 
                 costo = ws.cell(row=r, column=3).value or 0
                 precio = ws.cell(row=r, column=4).value or 0
                 categoria = sheetname.upper()
 
-                # REGLA 3: Detectar variantes REALES de stock (empezando desde Columna F / columna 6)
+                # NUEVA REGLA: Copiar el valor original de la Columna F (Columna 6 del inicial) para el Talle
+                val_talle_orig = ws.cell(row=r, column=6).value
+                talle_final = (
+                    str(val_talle_orig).strip()
+                    if val_talle_orig is not None
+                    else "U"
+                )
+
+                # Detectar variantes de stock en columnas posteriores (G en adelante)
                 variantes = []
-                for c in range(6, ws.max_column + 1):
+                for c in range(7, ws.max_column + 1):
                     val = ws.cell(row=r, column=c).value
                     if (
                         isinstance(val, (int, float))
                         and val > 0
                         and not isinstance(val, bool)
                     ):
-                        # Buscar el nombre del color en los encabezados
+                        # Detectar nombre del color en encabezados
                         h1 = ws.cell(row=1, column=c).value
                         h2 = ws.cell(row=2, column=c).value
                         h3 = ws.cell(row=3, column=c).value
 
                         color_name = "NEGRO"
-                        for h in [h2, h1, h3]:
+                        for h in [h3, h2, h1]:
                             if (
                                 h
                                 and isinstance(h, str)
@@ -99,8 +108,7 @@ def procesar_excel(file_bytes):
 
                         variantes.append((color_name, int(val)))
 
-                # REGLA DE FILA ÚNICA VS MÚLTIPLES FILAS:
-                # Si no hay variantes registradas en F en adelante, o solo hay una variante
+                # Si no hay variantes registradas en columnas posteriores
                 if not variantes:
                     registros_salida.append(
                         {
@@ -111,7 +119,7 @@ def procesar_excel(file_bytes):
                             "Proveedor": "1407",
                             "Costo": costo,
                             "Precio": precio,
-                            "Talle": "U",
+                            "Talle": talle_final,  # Columna H toma el valor de F
                             "Color": "NEGRO",
                             "Stock": 1,
                             "Año": "1407",
@@ -120,7 +128,6 @@ def procesar_excel(file_bytes):
                     codigo_padre += 1
 
                 elif len(variantes) == 1:
-                    # Un solo color/variante: Fila única (sin duplicar ni crear filas extras)
                     color_var, stock_var = variantes[0]
                     registros_salida.append(
                         {
@@ -131,7 +138,7 @@ def procesar_excel(file_bytes):
                             "Proveedor": "1407",
                             "Costo": costo,
                             "Precio": precio,
-                            "Talle": "U",
+                            "Talle": talle_final,  # Columna H toma el valor de F
                             "Color": color_var,
                             "Stock": stock_var,
                             "Año": "1407",
@@ -140,7 +147,6 @@ def procesar_excel(file_bytes):
                     codigo_padre += 1
 
                 else:
-                    # Múltiples colores: Crear una fila por cada color disponible
                     for color_var, stock_var in variantes:
                         registros_salida.append(
                             {
@@ -151,7 +157,7 @@ def procesar_excel(file_bytes):
                                 "Proveedor": "1407",
                                 "Costo": costo,
                                 "Precio": precio,
-                                "Talle": "U",
+                                "Talle": talle_final,  # Columna H toma el valor de F
                                 "Color": color_var,
                                 "Stock": stock_var,
                                 "Año": "1407",
