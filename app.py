@@ -4,33 +4,45 @@ import pandas as pd
 
 
 def procesar_carga_palermo(
-    path_carga_palermo: str,
-    path_modelo: str = "Modelo 2 palermo 1407.xlsx",
-    path_salida: str = "Carga_Web_Final.xlsx",
+    archivo_entrada: str,
+    archivo_salida: str = "Modelo_2_Palermo_Generado.xlsx",
     proveedor_id: str = "1407",
+    codigo_padre_inicial: int = 503823,
 ):
-    """Procesa el archivo 'Carga palermo' filtrando celdas amarillas,
+    """Procesa el archivo 'Carga palermo':
 
-    realiza la concatenación A + B en la columna C y genera la matriz
-    con la estructura exacta del 'Modelo 2'.
+    1. Filtra filas con relleno amarillo (productos nuevos) en cualquier pestaña.
+    2. Concatena Col A y Col B -> Col C ('CÓDIGO DESCRIPCIÓN').
+    3. Si la fila tiene múltiples columnas de colores/talles con valores (stock > 0),
+       crea una NUEVA FILA duplicando de la col C a la G (Descripción, Categoría, Proveedor, Costo, Precio).
     """
-    if not os.path.exists(path_carga_palermo):
-        print(f"❌ Error: El archivo '{path_carga_palermo}' no existe.")
+    if not os.path.exists(archivo_entrada):
+        print(
+            f"❌ Error: No se encontró el archivo de entrada '{archivo_entrada}'."
+        )
         return
 
-    # 1. Cargar libro con openpyxl para detectar relleno amarillo
-    wb = openpyxl.load_workbook(path_carga_palermo, data_only=True)
-    filas_nuevas = []
+    print(f"🔄 Leyendo archivo inicial: {archivo_entrada} ...")
 
-    print("🔍 Buscando artículos nuevos (relleno amarillo)...")
+    wb = openpyxl.load_workbook(archivo_entrada, data_only=True)
+    filas_destino = []
+    codigo_padre_actual = codigo_padre_inicial
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
 
-        for r in range(1, ws.max_row + 1):
+        # Obtener los encabezados de colores/talles de la fila 1 (si existen)
+        encabezados_col = {}
+        for col_idx in range(5, ws.max_column + 1):
+            val_header = ws.cell(row=1, column=col_idx).value
+            if val_header is not None and str(val_header).strip() != "":
+                encabezados_col[col_idx] = str(val_header).strip().upper()
+
+        # Recorrer filas desde la fila 2
+        for r in range(2, ws.max_row + 1):
             cell_a = ws.cell(row=r, column=1)
 
-            # Verificar si la celda de la columna A tiene fondo amarillo
+            # Detectar relleno amarillo en la Columna A (#FFFF00)
             is_yellow = False
             if cell_a.fill and cell_a.fill.start_color:
                 rgb = str(cell_a.fill.start_color.rgb).upper()
@@ -46,76 +58,83 @@ def procesar_carga_palermo(
                 )
 
                 # ========================================================
-                # PASO 1: Concatenar A y B con espacio (" ") -> Columna C
+                # PASO 1: CONCATENACIÓN "=A & ' ' & B" -> Columna C Destino
                 # ========================================================
-                col_c_concatenada = f"{cod_a} {desc_b}"
+                descripcion_concatenada = f"{cod_a} {desc_b}"
 
-                # Tomar Costo (Col C origen) y Precio (Col D u E origen)
-                costo_d = ws.cell(row=r, column=3).value or 0
-                precio_e = ws.cell(row=r, column=4).value or 0
+                # Columnas C y D origen -> Costo y Precio
+                costo_val = ws.cell(row=r, column=3).value or 0
+                precio_val = ws.cell(row=r, column=4).value or 0
+                categoria_val = sheet_name.upper()
 
-                # Desglose de talles/colores a partir de la columna F en adelante
-                # (Recorremos las columnas de variantes del Excel original)
-                for c_idx in range(6, ws.max_column + 1, 2):
-                    talle_val = ws.cell(row=r, column=c_idx - 1).value or "U"
-                    stock_val = ws.cell(row=r, column=c_idx).value
-                    header_color = ws.cell(row=2, column=c_idx).value or "ÚNICO"
+                # ========================================================
+                # PASO 2: EVALUAR SI HAY MÚLTIPLES VALORES (VARIANTES/STOCK)
+                # ========================================================
+                variantes_encontradas = []
 
+                for col_idx, col_nombre in encabezados_col.items():
+                    val_stock = ws.cell(row=r, column=col_idx).value
+
+                    # Si el valor de stock es un número válido y mayor a 0
                     if (
-                        stock_val is not None
-                        and str(stock_val).isdigit()
-                        and int(stock_val) > 0
+                        val_stock is not None
+                        and isinstance(val_stock, (int, float))
+                        and val_stock > 0
                     ):
-                        filas_nuevas.append(
+                        variantes_encontradas.append(
                             {
-                                "descripcion_concatenada": col_c_concatenada,
-                                "categoria": sheet_name.upper(),
-                                "costo": costo_d,
-                                "precio": precio_e,
-                                "talle": str(talle_val).strip(),
-                                "color": str(header_color).strip().upper(),
-                                "stock": int(stock_val),
+                                "color": col_nombre,
+                                "talle": "U",  # Talle por defecto si es único
+                                "stock": int(val_stock),
                             }
                         )
 
-    print(
-        f"✅ Se detectaron {len(filas_nuevas)} variantes de productos nuevos."
-    )
+                # Si no se halló stock en las columnas mapeadas pero es amarillo
+                if not variantes_encontradas:
+                    variantes_encontradas.append(
+                        {"color": "ÚNICO", "talle": "U", "stock": 1}
+                    )
 
-    # 2. Construir el DataFrame final con el formato del Modelo 2
-    registros_finales = []
-    codigo_padre = 503823  # Autoincremental base de código padre
+                # ========================================================
+                # PASO 3: DUPLICAR COLUMNAS C A G EN CADAS FILA NUEVA
+                # ========================================================
+                for var in variantes_encontradas:
+                    filas_destino.append(
+                        {
+                            "Codigo padre": codigo_padre_actual,  # Col A destino
+                            "hijo": None,  # Col B destino
+                            # --- COPIADO C A G (Se repite para cada nueva fila creada) ---
+                            "Descripción/ Nombre": descripcion_concatenada,  # Col C
+                            "Categoria": categoria_val,  # Col D
+                            "Proveedor": proveedor_id,  # Col E
+                            "Costo": costo_val,  # Col F
+                            "Precio": precio_val,  # Col G
+                            # -------------------------------------------------------------
+                            "Talle": var["talle"],  # Col H
+                            "Color": var["color"],  # Col I
+                            "Stock": var["stock"],  # Col J
+                            "Año": proveedor_id,  # Col K
+                        }
+                    )
+                    # Incrementar el código padre por fila única asignada
+                    codigo_padre_actual += 1
 
-    for idx, item in enumerate(filas_nuevas):
-        registros_finales.append(
-            {
-                "Codigo padre": codigo_padre + idx,
-                "hijo": None,
-                # Columna C concatenada -> 'Descripción/ Nombre'
-                "Descripción/ Nombre": item["descripcion_concatenada"],
-                "Categoria": item["categoria"],
-                "Proveedor": proveedor_id,
-                # Columnas C y D (Origen) -> Columnas F y G (Destino)
-                "Costo": item["costo"],
-                "Precio": item["precio"],
-                # Mapeo a Columnas H, I, J (Talle, Color, Stock)
-                "Talle": item["talle"],
-                "Color": item["color"],
-                "Stock": item["stock"],
-                "Año": proveedor_id,
-            }
-        )
+        print(f"  ✓ Pestaña '{sheet_name}' procesada.")
 
-    df_resultado = pd.DataFrame(registros_finales)
+    # Guardar en DataFrame y exportar al formato exacto del Modelo 2
+    df_resultado = pd.DataFrame(filas_destino)
 
-    # 3. Exportar al Excel definitivo
-    df_resultado.to_excel(path_salida, index=False)
-    print(f"🚀 Archivo procesado con éxito y guardado en: '{path_salida}'")
+    if not df_resultado.empty:
+        df_resultado.to_excel(archivo_salida, index=False)
+        print(f"\n✅ ¡Proceso completado con éxito!")
+        print(f"📊 Filas totales generadas: {len(df_resultado)}")
+        print(f"📁 Archivo final: '{archivo_salida}'")
+    else:
+        print("\n⚠️ No se encontraron filas amarillas en el archivo cargado.")
 
 
 if __name__ == "__main__":
-    procesar_carga_palermo(
-        path_carga_palermo="CARGA PALERMO 2026 (1)_2.xlsx",
-        path_modelo="Modelo 2 palermo 1407.xlsx",
-        path_salida="Modelo_2_Palermo_Generado.xlsx",
-    )
+    NOMBRE_INPUT = "CARGA PALERMO 2026 (1).xlsx"
+    NOMBRE_OUTPUT = "Modelo_2_Palermo_Generado.xlsx"
+
+    procesar_carga_palermo(archivo_entrada=NOMBRE_INPUT, archivo_salida=NOMBRE_OUTPUT)
