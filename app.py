@@ -1,48 +1,40 @@
-import os
+import io
 import openpyxl
 import pandas as pd
+import streamlit as st
+
+# Configuración de página
+st.set_page_config(
+    page_title="Carga de Productos Web", page_icon="📦", layout="wide"
+)
+
+st.title("📦 Procesador de Productos Nuevos - Palermo")
+st.markdown(
+    "Sube tu archivo inicial Excel para detectar los productos nuevos (en **amarillo**), "
+    "concatenar código/descripción y armar el archivo final formateado."
+)
+
+# 1. Widget de subida de archivo
+uploaded_file = st.file_uploader(
+    "Selecciona el archivo Excel inicial (ej. 'Carga Palermo')",
+    type=["xlsx", "xls"],
+)
 
 
-def procesar_carga_palermo(
-    archivo_entrada: str,
-    archivo_salida: str = "Modelo_2_Palermo_Generado.xlsx",
-    proveedor_id: str = "1407",
-    codigo_padre_inicial: int = 503823,
-):
-    """Procesa el archivo 'Carga palermo':
+def procesar_excel(file_bytes):
+    # Cargar libro con openpyxl para inspeccionar colores de relleno
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
-    1. Filtra filas con relleno amarillo (productos nuevos) en cualquier pestaña.
-    2. Concatena Col A y Col B -> Col C ('CÓDIGO DESCRIPCIÓN').
-    3. Si la fila tiene múltiples columnas de colores/talles con valores (stock > 0),
-       crea una NUEVA FILA duplicando de la col C a la G (Descripción, Categoría, Proveedor, Costo, Precio).
-    """
-    if not os.path.exists(archivo_entrada):
-        print(
-            f"❌ Error: No se encontró el archivo de entrada '{archivo_entrada}'."
-        )
-        return
+    registros_salida = []
+    codigo_padre = 503823  # Autoincremental inicial
 
-    print(f"🔄 Leyendo archivo inicial: {archivo_entrada} ...")
+    for sheetname in wb.sheetnames:
+        ws = wb[sheetname]
 
-    wb = openpyxl.load_workbook(archivo_entrada, data_only=True)
-    filas_destino = []
-    codigo_padre_actual = codigo_padre_inicial
-
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-
-        # Obtener los encabezados de colores/talles de la fila 1 (si existen)
-        encabezados_col = {}
-        for col_idx in range(5, ws.max_column + 1):
-            val_header = ws.cell(row=1, column=col_idx).value
-            if val_header is not None and str(val_header).strip() != "":
-                encabezados_col[col_idx] = str(val_header).strip().upper()
-
-        # Recorrer filas desde la fila 2
-        for r in range(2, ws.max_row + 1):
+        for r in range(1, ws.max_row + 1):
             cell_a = ws.cell(row=r, column=1)
 
-            # Detectar relleno amarillo en la Columna A (#FFFF00)
+            # Verificar relleno amarillo (#FFFF00) en la Columna A
             is_yellow = False
             if cell_a.fill and cell_a.fill.start_color:
                 rgb = str(cell_a.fill.start_color.rgb).upper()
@@ -57,84 +49,107 @@ def procesar_carga_palermo(
                     else ""
                 )
 
-                # ========================================================
-                # PASO 1: CONCATENACIÓN "=A & ' ' & B" -> Columna C Destino
-                # ========================================================
-                descripcion_concatenada = f"{cod_a} {desc_b}"
+                # Omitir filas de encabezados accidentales
+                if "FECHA" in desc_b or "FECHA" in cod_a or cod_a == "None":
+                    continue
 
-                # Columnas C y D origen -> Costo y Precio
-                costo_val = ws.cell(row=r, column=3).value or 0
-                precio_val = ws.cell(row=r, column=4).value or 0
-                categoria_val = sheet_name.upper()
+                # REGLA 2: Concatenar (A + B) con un espacio en la Columna C
+                col_c_concatenada = f"{cod_a} {desc_b}"
 
-                # ========================================================
-                # PASO 2: EVALUAR SI HAY MÚLTIPLES VALORES (VARIANTES/STOCK)
-                # ========================================================
-                variantes_encontradas = []
+                costo = ws.cell(row=r, column=3).value or 0
+                precio = ws.cell(row=r, column=4).value or 0
+                categoria = sheetname.upper()
 
-                for col_idx, col_nombre in encabezados_col.items():
-                    val_stock = ws.cell(row=r, column=col_idx).value
-
-                    # Si el valor de stock es un número válido y mayor a 0
+                # REGLA 3: Detectar variantes de colores/stock a la derecha
+                variantes = []
+                for c in range(5, ws.max_column + 1):
+                    val = ws.cell(row=r, column=c).value
                     if (
-                        val_stock is not None
-                        and isinstance(val_stock, (int, float))
-                        and val_stock > 0
+                        isinstance(val, (int, float))
+                        and val > 0
+                        and not isinstance(val, bool)
                     ):
-                        variantes_encontradas.append(
-                            {
-                                "color": col_nombre,
-                                "talle": "U",  # Talle por defecto si es único
-                                "stock": int(val_stock),
-                            }
-                        )
+                        # Obtener nombre del color desde las primeras filas de la columna
+                        h1 = ws.cell(row=1, column=c).value
+                        h2 = ws.cell(row=2, column=c).value
+                        h3 = ws.cell(row=3, column=c).value
 
-                # Si no se halló stock en las columnas mapeadas pero es amarillo
-                if not variantes_encontradas:
-                    variantes_encontradas.append(
-                        {"color": "ÚNICO", "talle": "U", "stock": 1}
-                    )
+                        color_name = "NEGRO"
+                        for h in [h2, h1, h3]:
+                            if (
+                                h
+                                and isinstance(h, str)
+                                and not h.startswith("FECHA")
+                                and h.strip()
+                                not in [
+                                    "COSTO",
+                                    "TC",
+                                    "EF",
+                                    "NEG",
+                                    "TALLE",
+                                    "TARJETA",
+                                ]
+                            ):
+                                color_name = h.strip().upper()
+                                break
 
-                # ========================================================
-                # PASO 3: DUPLICAR COLUMNAS C A G EN CADAS FILA NUEVA
-                # ========================================================
-                for var in variantes_encontradas:
-                    filas_destino.append(
+                        variantes.append((color_name, int(val)))
+
+                # Si solo tiene Negro o no se especificó otra variante
+                if not variantes:
+                    variantes.append(("NEGRO", 1))
+
+                # Duplicar fila si hay más variantes (copiando desde Col C a Col G)
+                for color_var, stock_var in variantes:
+                    registros_salida.append(
                         {
-                            "Codigo padre": codigo_padre_actual,  # Col A destino
-                            "hijo": None,  # Col B destino
-                            # --- COPIADO C A G (Se repite para cada nueva fila creada) ---
-                            "Descripción/ Nombre": descripcion_concatenada,  # Col C
-                            "Categoria": categoria_val,  # Col D
-                            "Proveedor": proveedor_id,  # Col E
-                            "Costo": costo_val,  # Col F
-                            "Precio": precio_val,  # Col G
-                            # -------------------------------------------------------------
-                            "Talle": var["talle"],  # Col H
-                            "Color": var["color"],  # Col I
-                            "Stock": var["stock"],  # Col J
-                            "Año": proveedor_id,  # Col K
+                            "Codigo padre": codigo_padre,
+                            "hijo": None,
+                            "Descripción/ Nombre": col_c_concatenada,  # Columna C
+                            "Categoria": categoria,  # Columna D
+                            "Proveedor": "1407",  # Columna E
+                            "Costo": costo,  # Columna F
+                            "Precio": precio,  # Columna G
+                            "Talle": "U",  # Columna H
+                            "Color": color_var,  # Columna I
+                            "Stock": stock_var,  # Columna J
+                            "Año": "1407",  # Columna K
                         }
                     )
-                    # Incrementar el código padre por fila única asignada
-                    codigo_padre_actual += 1
+                    codigo_padre += 1
 
-        print(f"  ✓ Pestaña '{sheet_name}' procesada.")
+    return pd.DataFrame(registros_salida)
 
-    # Guardar en DataFrame y exportar al formato exacto del Modelo 2
-    df_resultado = pd.DataFrame(filas_destino)
+
+# 2. Lógica de ejecución cuando el usuario sube un archivo
+if uploaded_file is not None:
+    st.info("🔄 Procesando archivo...")
+    bytes_data = uploaded_file.read()
+
+    df_resultado = procesar_excel(bytes_data)
 
     if not df_resultado.empty:
-        df_resultado.to_excel(archivo_salida, index=False)
-        print(f"\n✅ ¡Proceso completado con éxito!")
-        print(f"📊 Filas totales generadas: {len(df_resultado)}")
-        print(f"📁 Archivo final: '{archivo_salida}'")
+        st.success(
+            f"✅ ¡Proceso finalizado! Se encontraron **{len(df_resultado)} filas** de productos nuevos."
+        )
+
+        # Vista previa de los datos
+        st.subheader("Vista previa del archivo generado:")
+        st.dataframe(df_resultado.head(15), use_container_width=True)
+
+        # Convertir a Excel en memoria para la descarga
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_resultado.to_excel(writer, index=False, sheet_name="Hoja1")
+
+        # Botón para descargar el Excel final
+        st.download_button(
+            label="📥 Descargar Excel Procesado (Modelo 2)",
+            data=buffer.getvalue(),
+            file_name="Modelo_2_Palermo_Generado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
     else:
-        print("\n⚠️ No se encontraron filas amarillas en el archivo cargado.")
-
-
-if __name__ == "__main__":
-    NOMBRE_INPUT = "CARGA PALERMO 2026 (1).xlsx"
-    NOMBRE_OUTPUT = "Modelo_2_Palermo_Generado.xlsx"
-
-    procesar_carga_palermo(archivo_entrada=NOMBRE_INPUT, archivo_salida=NOMBRE_OUTPUT)
+        st.warning(
+            "⚠️ No se detectaron celdas rellenas en color amarillo en el archivo subido."
+        )
