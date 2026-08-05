@@ -1,22 +1,280 @@
 import io
+
 import openpyxl
 import pandas as pd
 import streamlit as st
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Carga de Productos Web", page_icon="📦", layout="wide"
+    page_title="Procesador de Productos | Palermo",
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-st.title("📦 Procesador de Productos Nuevos - Palermo")
+# Estilos visuales — no afectan la lógica del procesamiento
 st.markdown(
-    "Sube tu archivo inicial Excel para detectar los productos nuevos (en **amarillo**), "
-    "concatenar código/descripción y armar el archivo final formateado."
+    """
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap');
+
+        .stApp {
+            background:
+                radial-gradient(circle at 6% 5%, rgba(190, 161, 110, 0.18), transparent 24%),
+                radial-gradient(circle at 94% 0%, rgba(48, 57, 45, 0.10), transparent 25%),
+                #f7f6f2;
+            color: #1f2520;
+            font-family: "DM Sans", sans-serif;
+        }
+
+        .block-container {
+            max-width: 1160px;
+            padding-top: 2.4rem;
+            padding-bottom: 3rem;
+        }
+
+        .hero {
+            background: linear-gradient(135deg, #202820 0%, #344332 100%);
+            color: #ffffff;
+            padding: 2.6rem 2.8rem;
+            border-radius: 22px;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 14px 35px rgba(31, 43, 31, 0.18);
+        }
+
+        .hero-kicker {
+            color: #d8bd81;
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-bottom: 0.7rem;
+        }
+
+        .hero h1 {
+            font-family: "Playfair Display", serif;
+            font-size: clamp(2rem, 4vw, 3rem);
+            line-height: 1.12;
+            margin: 0 0 0.7rem 0;
+            color: #ffffff;
+        }
+
+        .hero p {
+            margin: 0;
+            color: #e5e9e2;
+            font-size: 1rem;
+            line-height: 1.6;
+            max-width: 720px;
+        }
+
+        .steps-container {
+            display: flex;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            margin: 0.25rem 0 1.4rem 0;
+        }
+
+        .step {
+            flex: 1;
+            min-width: 200px;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            background: rgba(255, 255, 255, 0.74);
+            border: 1px solid #e5e3dc;
+            border-radius: 14px;
+            padding: 0.85rem 1rem;
+        }
+
+        .step-number {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: #d8bd81;
+            color: #263025;
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+
+        .step-text {
+            color: #4c554a;
+            font-size: 0.88rem;
+            line-height: 1.3;
+        }
+
+        .step-text strong {
+            color: #263025;
+            display: block;
+            font-size: 0.92rem;
+        }
+
+        .upload-card, .preview-card {
+            background: rgba(255, 255, 255, 0.86);
+            border: 1px solid #e6e3da;
+            border-radius: 18px;
+            padding: 1.7rem;
+            box-shadow: 0 8px 24px rgba(36, 44, 34, 0.05);
+        }
+
+        .card-label {
+            color: #9c7b3e;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 0.35rem;
+        }
+
+        .card-title {
+            color: #263025;
+            font-family: "Playfair Display", serif;
+            font-size: 1.45rem;
+            margin: 0 0 0.35rem 0;
+        }
+
+        .card-description {
+            color: #687064;
+            margin: 0 0 1.15rem 0;
+            font-size: 0.94rem;
+        }
+
+        .metric-card {
+            background: #263025;
+            border-radius: 15px;
+            padding: 1.1rem 1.25rem;
+            color: white;
+            margin-bottom: 1rem;
+        }
+
+        .metric-card .metric-label {
+            color: #d7ddcf;
+            font-size: 0.76rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .metric-card .metric-value {
+            color: #e5c987;
+            font-family: "Playfair Display", serif;
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1.15;
+            margin-top: 0.25rem;
+        }
+
+        [data-testid="stFileUploader"] {
+            border: 1.5px dashed #b6a26e;
+            border-radius: 13px;
+            padding: 0.5rem;
+            background: #fcfbf8;
+        }
+
+        [data-testid="stFileUploader"] section {
+            padding: 1.1rem;
+        }
+
+        .stDownloadButton > button {
+            width: 100%;
+            border: 0;
+            border-radius: 10px;
+            background: #b79554;
+            color: #1f2820;
+            font-weight: 700;
+            padding: 0.7rem 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .stDownloadButton > button:hover {
+            background: #d2b774;
+            color: #172016;
+            transform: translateY(-1px);
+        }
+
+        [data-testid="stDataFrame"] {
+            border: 1px solid #ebe8df;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        @media (max-width: 700px) {
+            .block-container {
+                padding-top: 1.2rem;
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+
+            .hero {
+                padding: 1.8rem 1.4rem;
+            }
+
+            .upload-card, .preview-card {
+                padding: 1.2rem;
+            }
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Encabezado
+st.markdown(
+    """
+    <section class="hero">
+        <div class="hero-kicker">Gestión de catálogo</div>
+        <h1>Procesador de Productos Nuevos</h1>
+        <p>
+            Cargá el archivo de Palermo, detectá los productos destacados en amarillo
+            y descargá el Excel final listo para usar.
+        </p>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Indicador visual de proceso
+st.markdown(
+    """
+    <div class="steps-container">
+        <div class="step">
+            <div class="step-number">1</div>
+            <div class="step-text"><strong>Subí el Excel</strong>Seleccioná el archivo inicial.</div>
+        </div>
+        <div class="step">
+            <div class="step-number">2</div>
+            <div class="step-text"><strong>Procesamiento automático</strong>Se detectan los productos nuevos.</div>
+        </div>
+        <div class="step">
+            <div class="step-number">3</div>
+            <div class="step-text"><strong>Descargá el resultado</strong>Obtené el archivo listo para cargar.</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Área de carga
+st.markdown(
+    """
+    <section class="upload-card">
+        <div class="card-label">Archivo de origen</div>
+        <h2 class="card-title">Cargá tu planilla de productos</h2>
+        <p class="card-description">
+            Se aceptan archivos Excel en formato <strong>.xlsx</strong> o <strong>.xls</strong>.
+            Los productos nuevos deben estar identificados con color amarillo en la columna A.
+        </p>
+    </section>
+    """,
+    unsafe_allow_html=True,
 )
 
 uploaded_file = st.file_uploader(
-    "Selecciona el archivo Excel inicial (ej. 'Carga Palermo')",
+    "Seleccioná el archivo Excel inicial (por ejemplo, “Carga Palermo”)",
     type=["xlsx", "xls"],
+    label_visibility="visible",
 )
 
 
@@ -30,191 +288,4 @@ def es_fila_encabezado(ws, r):
 def procesar_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
-    registros_salida = []
-    codigo_padre = 503823  # Autoincremental inicial
-
-    for sheetname in wb.sheetnames:
-        ws = wb[sheetname]
-
-        # Diccionario para almacenar el color correspondiente a cada columna en la sección actual
-        colores_seccion_actual = {}
-
-        for r in range(1, ws.max_row + 1):
-            cell_a = ws.cell(row=r, column=1)
-
-            # 1. Si la fila es un encabezado de sección, actualizamos los nombres de los colores por columna
-            if es_fila_encabezado(ws, r):
-                for c in range(1, ws.max_column + 1):
-                    val_hdr = ws.cell(row=r, column=c).value
-                    if val_hdr and isinstance(val_hdr, str):
-                        clean_hdr = val_hdr.strip().upper()
-                        if clean_hdr not in [
-                            "COSTO",
-                            "TC",
-                            "EF",
-                            "TALLE",
-                            "TARJETA",
-                            "FECHA",
-                        ] and not clean_hdr.startswith("FECHA"):
-                            if clean_hdr == "NEG":
-                                colores_seccion_actual[c] = "NEGRO"
-                            else:
-                                colores_seccion_actual[c] = clean_hdr
-                continue
-
-            # 2. Verificar si la celda en Columna A está resaltada en amarillo
-            is_yellow = False
-            if cell_a.fill and cell_a.fill.start_color:
-                rgb = str(cell_a.fill.start_color.rgb).upper()
-                if "FFFF00" in rgb or "FFFF0000" in rgb:
-                    is_yellow = True
-
-            if is_yellow and cell_a.value is not None:
-                cod_a = str(cell_a.value).strip()
-                desc_b = (
-                    str(ws.cell(row=r, column=2).value).strip()
-                    if ws.cell(row=r, column=2).value
-                    else ""
-                )
-
-                if "FECHA" in desc_b or "FECHA" in cod_a or cod_a == "None":
-                    continue
-
-                # Concatenar Código + Descripción
-                col_c_concatenada = f"{cod_a} {desc_b}"
-
-                costo = ws.cell(row=r, column=3).value or 0
-                precio = ws.cell(row=r, column=4).value or 0
-                categoria = sheetname.upper()
-
-                # Talle tomado de Columna F (si está vacío, se resolverá por variante o quedará "U")
-                val_f = ws.cell(row=r, column=6).value
-                talle_col_f = str(val_f).strip() if val_f is not None else ""
-
-                # 3. Buscar cantidades de stock en columnas a partir de la columna 6
-                variantes = []
-                for c in range(6, ws.max_column + 1):
-                    val = ws.cell(row=r, column=c).value
-
-                    # Si hay stock numérico > 0
-                    if (
-                        isinstance(val, (int, float))
-                        and val > 0
-                        and not isinstance(val, bool)
-                    ):
-                        # Obtener el color mapeado para esta columna en la sección actual
-                        color = colores_seccion_actual.get(c, None)
-
-                        # Si la columna actual no tiene nombre de color registrado, intentar la columna previa
-                        if not color and c > 1:
-                            color = colores_seccion_actual.get(c - 1, None)
-
-                        if not color:
-                            color = "NEGRO"
-
-                        # Buscar el talle correspondiente a esta variante
-                        val_talle_par = ws.cell(row=r, column=c - 1).value
-                        if (
-                            val_talle_par is not None
-                            and str(val_talle_par).strip() != ""
-                            and not isinstance(val_talle_par, (int, float))
-                        ):
-                            talle_var = str(val_talle_par).strip()
-                        elif talle_col_f != "" and not isinstance(
-                            val_f, (int, float)
-                        ):
-                            talle_var = talle_col_f
-                        else:
-                            talle_var = "U"
-
-                        variantes.append((color, talle_var, int(val)))
-
-                # 4. Generar registros finales
-                if not variantes:
-                    talle_def = talle_col_f if talle_col_f != "" else "U"
-                    registros_salida.append(
-                        {
-                            "Codigo padre": codigo_padre,
-                            "hijo": None,
-                            "Descripción/ Nombre": col_c_concatenada,
-                            "Categoria": categoria,
-                            "Proveedor": "1407",
-                            "Costo": costo,
-                            "Precio": precio,
-                            "Talle": talle_def,
-                            "Color": "NEGRO",
-                            "Stock": 1,
-                            "Año": "1407",
-                        }
-                    )
-                    codigo_padre += 1
-
-                elif len(variantes) == 1:
-                    color_var, talle_var, stock_var = variantes[0]
-                    registros_salida.append(
-                        {
-                            "Codigo padre": codigo_padre,
-                            "hijo": None,
-                            "Descripción/ Nombre": col_c_concatenada,
-                            "Categoria": categoria,
-                            "Proveedor": "1407",
-                            "Costo": costo,
-                            "Precio": precio,
-                            "Talle": talle_var,
-                            "Color": color_var,  # Ej: PLATA
-                            "Stock": stock_var,
-                            "Año": "1407",
-                        }
-                    )
-                    codigo_padre += 1
-
-                else:
-                    for color_var, talle_var, stock_var in variantes:
-                        registros_salida.append(
-                            {
-                                "Codigo padre": codigo_padre,
-                                "hijo": None,
-                                "Descripción/ Nombre": col_c_concatenada,
-                                "Categoria": categoria,
-                                "Proveedor": "1407",
-                                "Costo": costo,
-                                "Precio": precio,
-                                "Talle": talle_var,
-                                "Color": color_var,
-                                "Stock": stock_var,
-                                "Año": "1407",
-                            }
-                        )
-                        codigo_padre += 1
-
-    return pd.DataFrame(registros_salida)
-
-
-if uploaded_file is not None:
-    st.info("🔄 Procesando archivo...")
-    bytes_data = uploaded_file.read()
-
-    df_resultado = procesar_excel(bytes_data)
-
-    if not df_resultado.empty:
-        st.success(
-            f"✅ ¡Proceso finalizado! Se generaron **{len(df_resultado)} filas** de productos."
-        )
-
-        st.subheader("Vista previa del archivo generado:")
-        st.dataframe(df_resultado.head(25), use_container_width=True)
-
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_resultado.to_excel(writer, index=False, sheet_name="Hoja1")
-
-        st.download_button(
-            label="📥 Descargar Excel Procesado (Modelo 2)",
-            data=buffer.getvalue(),
-            file_name="Modelo_2_Palermo_Generado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    else:
-        st.warning(
-            "⚠️ No se detectaron celdas rellenas en color amarillo en el archivo subido."
-        )
+    registro
