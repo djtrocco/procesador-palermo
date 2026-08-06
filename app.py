@@ -20,6 +20,13 @@ uploaded_file = st.file_uploader(
 )
 
 
+def es_fila_encabezado(ws, r):
+    """Verifica si la fila actual es un encabezado de bloque (ej. contiene FECHA o COSTO)."""
+    val_b = str(ws.cell(row=r, column=2).value or "").upper()
+    val_c = str(ws.cell(row=r, column=3).value or "").upper()
+    return "FECHA" in val_b or "COSTO" in val_c or "TARJETA" in val_c
+
+
 def procesar_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
@@ -29,10 +36,33 @@ def procesar_excel(file_bytes):
     for sheetname in wb.sheetnames:
         ws = wb[sheetname]
 
+        # Diccionario para almacenar el color correspondiente a cada columna en la sección actual
+        colores_seccion_actual = {}
+
         for r in range(1, ws.max_row + 1):
             cell_a = ws.cell(row=r, column=1)
 
-            # Detectar relleno amarillo (#FFFF00) en la Columna A
+            # 1. Si la fila es un encabezado de sección, actualizamos los nombres de los colores por columna
+            if es_fila_encabezado(ws, r):
+                for c in range(1, ws.max_column + 1):
+                    val_hdr = ws.cell(row=r, column=c).value
+                    if val_hdr and isinstance(val_hdr, str):
+                        clean_hdr = val_hdr.strip().upper()
+                        if clean_hdr not in [
+                            "COSTO",
+                            "TC",
+                            "EF",
+                            "TALLE",
+                            "TARJETA",
+                            "FECHA",
+                        ] and not clean_hdr.startswith("FECHA"):
+                            if clean_hdr == "NEG":
+                                colores_seccion_actual[c] = "NEGRO"
+                            else:
+                                colores_seccion_actual[c] = clean_hdr
+                continue
+
+            # 2. Verificar si la celda en Columna A está resaltada en amarillo
             is_yellow = False
             if cell_a.fill and cell_a.fill.start_color:
                 rgb = str(cell_a.fill.start_color.rgb).upper()
@@ -47,69 +77,61 @@ def procesar_excel(file_bytes):
                     else ""
                 )
 
-                # Omitir encabezados
                 if "FECHA" in desc_b or "FECHA" in cod_a or cod_a == "None":
                     continue
 
-                # REGLA: Concatenar (A + B) en la Columna C de salida
+                # Concatenar Código + Descripción
                 col_c_concatenada = f"{cod_a} {desc_b}"
 
                 costo = ws.cell(row=r, column=3).value or 0
                 precio = ws.cell(row=r, column=4).value or 0
                 categoria = sheetname.upper()
 
-                # NUEVA REGLA: Copiar el valor original de la Columna F (Columna 6 del inicial) para el Talle
-                val_talle_orig = ws.cell(row=r, column=6).value
-                talle_final = (
-                    str(val_talle_orig).strip()
-                    if val_talle_orig is not None
-                    else "U"
-                )
+                # Talle tomado de Columna F (si está vacío, se resolverá por variante o quedará "U")
+                val_f = ws.cell(row=r, column=6).value
+                talle_col_f = str(val_f).strip() if val_f is not None else ""
 
-                # Detectar variantes de stock en columnas posteriores (G en adelante)
+                # 3. Buscar cantidades de stock en columnas a partir de la columna 6
                 variantes = []
-                for c in range(7, ws.max_column + 1):
+                for c in range(6, ws.max_column + 1):
                     val = ws.cell(row=r, column=c).value
+
+                    # Si hay stock numérico > 0
                     if (
                         isinstance(val, (int, float))
                         and val > 0
                         and not isinstance(val, bool)
                     ):
-                        # Detectar nombre del color en encabezados
-                        h1 = ws.cell(row=1, column=c).value
-                        h2 = ws.cell(row=2, column=c).value
-                        h3 = ws.cell(row=3, column=c).value
+                        # Obtener el color mapeado para esta columna en la sección actual
+                        color = colores_seccion_actual.get(c, None)
 
-                        color_name = "NEGRO"
-                        for h in [h3, h2, h1]:
-                            if (
-                                h
-                                and isinstance(h, str)
-                                and not h.startswith("FECHA")
-                                and h.strip().upper()
-                                not in [
-                                    "COSTO",
-                                    "TC",
-                                    "EF",
-                                    "NEG",
-                                    "TALLE",
-                                    "TARJETA",
-                                ]
-                            ):
-                                color_name = h.strip().upper()
-                                break
-                            elif (
-                                h
-                                and isinstance(h, str)
-                                and h.strip().upper() == "NEG"
-                            ):
-                                color_name = "NEGRO"
-                                break
+                        # Si la columna actual no tiene nombre de color registrado, intentar la columna previa
+                        if not color and c > 1:
+                            color = colores_seccion_actual.get(c - 1, None)
 
-                        variantes.append((color_name, int(val)))
+                        if not color:
+                            color = "NEGRO"
 
-                # Si no hay variantes registradas en columnas posteriores
+                        # Buscar el talle correspondiente a esta variante
+                        val_talle_par = ws.cell(row=r, column=c - 1).value
+                        if (
+                            val_talle_par is not None
+                            and str(val_talle_par).strip() != ""
+                            and not isinstance(val_talle_par, (int, float))
+                        ):
+                            talle_var = str(val_talle_par).strip()
+                        elif talle_col_f != "" and not isinstance(
+                            val_f, (int, float)
+                        ):
+                            talle_var = talle_col_f
+                        else:
+                            talle_var = "U"
+
+                        variantes.append((color, talle_var, int(val)))
+
+                # 4. Generar registros finales
                 if not variantes:
+                    talle_def = talle_col_f if talle_col_f != "" else "U"
                     registros_salida.append(
                         {
                             "Codigo padre": codigo_padre,
@@ -119,7 +141,7 @@ def procesar_excel(file_bytes):
                             "Proveedor": "1407",
                             "Costo": costo,
                             "Precio": precio,
-                            "Talle": talle_final,  # Columna H toma el valor de F
+                            "Talle": talle_def,
                             "Color": "NEGRO",
                             "Stock": 1,
                             "Año": "1407",
@@ -128,7 +150,7 @@ def procesar_excel(file_bytes):
                     codigo_padre += 1
 
                 elif len(variantes) == 1:
-                    color_var, stock_var = variantes[0]
+                    color_var, talle_var, stock_var = variantes[0]
                     registros_salida.append(
                         {
                             "Codigo padre": codigo_padre,
@@ -138,8 +160,8 @@ def procesar_excel(file_bytes):
                             "Proveedor": "1407",
                             "Costo": costo,
                             "Precio": precio,
-                            "Talle": talle_final,  # Columna H toma el valor de F
-                            "Color": color_var,
+                            "Talle": talle_var,
+                            "Color": color_var,  # Ej: PLATA
                             "Stock": stock_var,
                             "Año": "1407",
                         }
@@ -147,7 +169,7 @@ def procesar_excel(file_bytes):
                     codigo_padre += 1
 
                 else:
-                    for color_var, stock_var in variantes:
+                    for color_var, talle_var, stock_var in variantes:
                         registros_salida.append(
                             {
                                 "Codigo padre": codigo_padre,
@@ -157,7 +179,7 @@ def procesar_excel(file_bytes):
                                 "Proveedor": "1407",
                                 "Costo": costo,
                                 "Precio": precio,
-                                "Talle": talle_final,  # Columna H toma el valor de F
+                                "Talle": talle_var,
                                 "Color": color_var,
                                 "Stock": stock_var,
                                 "Año": "1407",
@@ -180,7 +202,7 @@ if uploaded_file is not None:
         )
 
         st.subheader("Vista previa del archivo generado:")
-        st.dataframe(df_resultado.head(20), use_container_width=True)
+        st.dataframe(df_resultado.head(25), use_container_width=True)
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
