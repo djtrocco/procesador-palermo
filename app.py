@@ -27,6 +27,15 @@ def es_fila_encabezado(ws, r):
     return "FECHA" in val_b or "COSTO" in val_c or "TARJETA" in val_c
 
 
+def formatear_talle(valor):
+    """Devuelve el talle como texto (S/M, U...) o como entero si es numérico (38, 40...)."""
+    if isinstance(valor, bool) or valor is None:
+        return ""
+    if isinstance(valor, (int, float)):
+        return int(valor) if float(valor).is_integer() else str(valor)
+    return str(valor).strip()
+
+
 def procesar_excel(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
 
@@ -38,16 +47,21 @@ def procesar_excel(file_bytes):
 
         # Diccionario para almacenar el color correspondiente a cada columna en la sección actual
         colores_seccion_actual = {}
+        # Columnas que, según el encabezado, contienen talles (no stock)
+        columnas_talle = set()
 
         for r in range(1, ws.max_row + 1):
             cell_a = ws.cell(row=r, column=1)
 
             # 1. Si la fila es un encabezado de sección, actualizamos los nombres de los colores por columna
             if es_fila_encabezado(ws, r):
+                columnas_talle = set()
                 for c in range(1, ws.max_column + 1):
                     val_hdr = ws.cell(row=r, column=c).value
                     if val_hdr and isinstance(val_hdr, str):
                         clean_hdr = val_hdr.strip().upper()
+                        if clean_hdr == "TALLE":
+                            columnas_talle.add(c)
                         if clean_hdr not in [
                             "COSTO",
                             "TC",
@@ -89,11 +103,18 @@ def procesar_excel(file_bytes):
 
                 # Talle tomado de Columna F (si está vacío, se resolverá por variante o quedará "U")
                 val_f = ws.cell(row=r, column=6).value
-                talle_col_f = str(val_f).strip() if val_f is not None else ""
+                if isinstance(val_f, (int, float)) and 6 not in columnas_talle:
+                    # Número en F que no es columna de talle: no es un talle
+                    talle_col_f = ""
+                else:
+                    talle_col_f = formatear_talle(val_f)
 
                 # 3. Buscar cantidades de stock en columnas a partir de la columna 6
                 variantes = []
                 for c in range(6, ws.max_column + 1):
+                    # Las columnas TALLE no son stock (ej. talle 38 no es "38 unidades")
+                    if c in columnas_talle:
+                        continue
                     val = ws.cell(row=r, column=c).value
 
                     # Si hay stock numérico > 0
@@ -114,15 +135,17 @@ def procesar_excel(file_bytes):
 
                         # Buscar el talle correspondiente a esta variante
                         val_talle_par = ws.cell(row=r, column=c - 1).value
+                        es_col_talle = (c - 1) in columnas_talle
                         if (
                             val_talle_par is not None
                             and str(val_talle_par).strip() != ""
-                            and not isinstance(val_talle_par, (int, float))
+                            and (
+                                es_col_talle
+                                or not isinstance(val_talle_par, (int, float))
+                            )
                         ):
-                            talle_var = str(val_talle_par).strip()
-                        elif talle_col_f != "" and not isinstance(
-                            val_f, (int, float)
-                        ):
+                            talle_var = formatear_talle(val_talle_par)
+                        elif talle_col_f != "":
                             talle_var = talle_col_f
                         else:
                             talle_var = "U"
